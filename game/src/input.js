@@ -1,85 +1,152 @@
-// Keyboard, mouse and touch input, translated into one plain object the
-// world update reads. Edge-triggered actions (enter car, pause) are consumed
-// by the reader, so one key press never fires twice.
-
+// Keyboard, mouse and touch input for Costa Verde. The game reads a single
+// snapshot each frame: which keys are down, where the mouse is, and the clicks
+// and key presses that happened since the last frame.
 export function createInput(canvas) {
   const keys = new Set();
-  const input = {
-    up: false, down: false, left: false, right: false, run: false,
-    punch: false, shoot: false, enter: false, pause: false,
-    mouseX: 0, mouseY: 0, mouseScreenX: 640, mouseScreenY: 400,
-    anyKey: false,
-  };
+  const pressed = new Set();
+  const mouse = { x: 0, y: 0, down: false, clicked: false };
+  const touch = { active: false, x: 0, y: 0, startX: 0, startY: 0 };
 
-  const KEYMAP = {
-    ArrowUp: 'up', KeyW: 'up',
-    ArrowDown: 'down', KeyS: 'down',
-    ArrowLeft: 'left', KeyA: 'left',
-    ArrowRight: 'right', KeyD: 'right',
-    ShiftLeft: 'run', ShiftRight: 'run',
-    Space: 'punch',
-  };
-
-  function refresh() {
-    input.up = keys.has('up');
-    input.down = keys.has('down');
-    input.left = keys.has('left');
-    input.right = keys.has('right');
-    input.run = keys.has('run');
+  function keyName(e) {
+    return e.key.length === 1 ? e.key.toLowerCase() : e.key;
   }
 
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space') e.preventDefault();
-    input.anyKey = true;
-    if (e.code === 'KeyE' && !e.repeat) input.enter = true;
-    if (e.code === 'KeyP' && !e.repeat) input.pause = true;
-    if (e.code === 'KeyM' && !e.repeat) input.mute = true;
-    if (e.code === 'KeyR' && !e.repeat) input.restart = true;
-    if (e.code === 'Enter' && !e.repeat) input.confirm = true;
-    const mapped = KEYMAP[e.code];
-    if (mapped) {
-      keys.add(mapped);
-      if (mapped === 'punch') input.punch = true;
-      refresh();
+    const k = keyName(e);
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+      e.preventDefault();
     }
+    if (!keys.has(k)) pressed.add(k);
+    keys.add(k);
   });
   window.addEventListener('keyup', (e) => {
-    const mapped = KEYMAP[e.code];
-    if (mapped) {
-      keys.delete(mapped);
-      if (mapped === 'punch') input.punch = false;
-      refresh();
-    }
+    keys.delete(keyName(e));
   });
-  window.addEventListener('blur', () => { keys.clear(); refresh(); });
+  window.addEventListener('blur', () => {
+    keys.clear();
+  });
 
-  function setMouse(clientX, clientY) {
+  // Mouse and touch coordinates are scaled into the canvas backing size, so
+  // aiming stays exact whatever the window size is.
+  function toCanvas(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    input.mouseScreenX = (clientX - rect.left) * (canvas.width / rect.width);
-    input.mouseScreenY = (clientY - rect.top) * (canvas.height / rect.height);
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+    };
   }
 
-  canvas.addEventListener('mousemove', (e) => setMouse(e.clientX, e.clientY));
-  canvas.addEventListener('mousedown', (e) => {
-    setMouse(e.clientX, e.clientY);
-    input.shoot = true;
-    input.anyKey = true;
+  canvas.addEventListener('mousemove', (e) => {
+    const p = toCanvas(e.clientX, e.clientY);
+    mouse.x = p.x;
+    mouse.y = p.y;
   });
-  window.addEventListener('mouseup', () => { input.shoot = false; });
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      mouse.down = true;
+      mouse.clicked = true;
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    mouse.down = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // Touch: left half steers/moves, right half is the action side.
-  let touchId = null;
+  // Touch: drag to move, tap the right half to shoot, two-finger tap to enter a car.
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     const t = e.changedTouches[0];
-    touchId = t.identifier;
-    setMouse(t.clientX, t.clientY);
-    input.shoot = true;
-    input.anyKey = true;
+    const p = toCanvas(t.clientX, t.clientY);
+    touch.active = true;
+    touch.startX = p.x;
+    touch.startY = p.y;
+    touch.x = touch.startX;
+    touch.y = touch.startY;
+    if (e.touches.length >= 2) pressed.add('e');
+  }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const p = toCanvas(t.clientX, t.clientY);
+    touch.x = p.x;
+    touch.y = p.y;
   }, { passive: false });
   canvas.addEventListener('touchend', (e) => {
-    for (const t of e.changedTouches) if (t.identifier === touchId) input.shoot = false;
-  });
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      if (touch.startX > canvas.width * 0.6 && Math.abs(touch.x - touch.startX) < 12) {
+        mouse.clicked = true;
+        mouse.x = touch.x;
+        mouse.y = touch.y;
+      }
+      touch.active = false;
+    }
+  }, { passive: false });
 
-  return input;
+  return {
+    keys,
+    mouse,
+    touch,
+    down(name) {
+      return keys.has(name);
+    },
+    // True once, on the frame the key went down.
+    wasPressed(name) {
+      return pressed.has(name);
+    },
+    // Consume an edge-triggered press: true once, then gone, so one key press
+    // can never fire twice when the accumulator runs several simulation steps
+    // in a single rendered frame.
+    consume(name) {
+      const had = pressed.has(name);
+      if (had) pressed.delete(name);
+      return had;
+    },
+    // Consume a mouse click the same way.
+    consumeClick() {
+      const had = mouse.clicked;
+      mouse.clicked = false;
+      return had;
+    },
+    // Driving axes: -1..1 for steering, -1..1 for throttle.
+    driveAxes() {
+      let steer = 0;
+      let throttle = 0;
+      if (keys.has('a') || keys.has('ArrowLeft')) steer -= 1;
+      if (keys.has('d') || keys.has('ArrowRight')) steer += 1;
+      if (keys.has('w') || keys.has('ArrowUp')) throttle += 1;
+      if (keys.has('s') || keys.has('ArrowDown')) throttle -= 1;
+      if (touch.active) {
+        const dx = touch.x - touch.startX;
+        const dy = touch.y - touch.startY;
+        steer = Math.max(-1, Math.min(1, dx / 60));
+        throttle = Math.max(-1, Math.min(1, -dy / 60));
+      }
+      return { steer, throttle };
+    },
+    // Walking axes: -1..1 on each axis.
+    walkAxes() {
+      let x = 0;
+      let y = 0;
+      if (keys.has('a') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('d') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('w') || keys.has('ArrowUp')) y -= 1;
+      if (keys.has('s') || keys.has('ArrowDown')) y += 1;
+      if (touch.active) {
+        x = Math.max(-1, Math.min(1, (touch.x - touch.startX) / 60));
+        y = Math.max(-1, Math.min(1, (touch.y - touch.startY) / 60));
+      }
+      if (x !== 0 && y !== 0) {
+        const inv = 1 / Math.sqrt(2);
+        x *= inv;
+        y *= inv;
+      }
+      return { x, y };
+    },
+    // Call once per frame, after the game has read the input.
+    endFrame() {
+      pressed.clear();
+      mouse.clicked = false;
+    },
+  };
 }
