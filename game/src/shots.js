@@ -1,116 +1,123 @@
-// Deterministic screenshot scenarios: ?shot=start|play|chase|mission&seed=1.
-// Each shot sets up one fixed scene from the seeded world, drives it with a
-// scripted autopilot for a fixed number of ticks, then raises
-// window.__shotReady so the screenshot script knows the frame is final.
+// Deterministic screenshot scenarios for Costa Verde. Each shot sets the world
+// to an exact state, drives it with a fixed input script for a fixed number of
+// frames, and then the page flags window.__shotReady. Same seed, same pixels.
+import { MISSIONS } from './config.js';
+import { angleDelta, clamp } from './random.js';
 
-import { WORLD, AVENUES } from './config.js';
-import { clamp, angleDiff } from './random.js';
-
-export function parseShot() {
-  const q = new URLSearchParams(window.location.search);
-  return { name: q.get('shot') || '', seed: Number(q.get('seed') || '1') || 1 };
+function installDriver(input, fn) {
+  input.driveAxes = () => {
+    const a = fn();
+    return { steer: a.steer || 0, throttle: a.throttle || 0 };
+  };
+  input.walkAxes = () => {
+    const a = fn();
+    return { x: a.walkX || 0, y: a.walkY || 0 };
+  };
+  input.wasPressed = () => false;
+  input.consume = () => false;
+  input.consumeClick = () => false;
+  input.down = () => false;
 }
 
-function placeOnAvenue(world, x, y, angle, speed) {
-  const { state, player } = world;
-  const car = state.cars.find((c) => c.kind === 'parked') || state.cars[0];
-  car.kind = 'player';
-  car.x = x; car.y = y; car.angle = angle; car.speed = speed; car.maxSpeed = 460;
-  car.driver = false;
-  car.hp = 600; // the hero car takes a beating in a chase
-  player.car = car;
-  player.onFoot = false;
-  player.x = x; player.y = y; player.angle = angle; player.speed = speed;
-  state.camera.x = x; state.camera.y = y;
+// Steer a car along one avenue: aim at the travel direction, corrected by how
+// far the car has drifted off the avenue's centreline.
+function driveOnAvenue(world, avenueX, dir) {
+  const car = world.player.inCar;
+  if (!car) return { steer: 0, throttle: 0 };
+  const targetAngle = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+  const lateral = car.x - avenueX;
+  const want = targetAngle + dir * clamp(lateral * 0.004, -0.5, 0.5);
+  const steer = clamp(angleDelta(car.angle, want) * 2.2, -1, 1);
+  return { steer, throttle: 1 };
 }
 
-function busyStreet(world, avenueX, centerY) {
-  // Pull a handful of traffic cars and pedestrians onto the avenues beside
-  // the player's, so the frame reads as a living city while the player's
-  // own avenue stays clear to drive.
-  const { state } = world;
-  const lanes = [avenueX - 400, avenueX + 400];
-  let placed = 0;
-  for (const car of state.cars) {
-    if (car.kind !== 'traffic') continue;
-    const lane = lanes[placed % 2];
-    car.x = lane + (placed % 2 === 0 ? -22 : 22);
-    car.y = centerY - 500 + Math.floor(placed / 2) * 260;
-    car.angle = placed % 2 === 0 ? Math.PI / 2 : -Math.PI / 2;
-    car.vertical = true;
-    car.speed = 130;
-    placed++;
-    if (placed >= 8) break;
-  }
-  let peds = 0;
-  for (const ped of state.peds) {
-    if (ped.kind !== 'civilian' || ped.down) continue;
-    ped.x = avenueX + (peds % 2 === 0 ? -70 : 70);
-    ped.y = centerY - 320 + peds * 130;
-    ped.angle = peds % 2 === 0 ? Math.PI / 2 : -Math.PI / 2;
-    peds++;
-    if (peds >= 6) break;
-  }
+function makeHeroCar(x, y, angle, speed, color) {
+  return {
+    x, y, angle, speed, hp: 600, kind: 'hero', color,
+    driven: true, axis: 'y', dir: 1, lane: 18, turnAt: 0, stuck: 0, touchTimer: 0,
+  };
 }
 
-export function setupShot(world, name) {
-  const { state, player, city } = world;
-  state.mode = 'playing';
-  state.cash = 1250;
-  state.health = 100;
-  player.ammo = 36;
+export function setupShot(world, input, name) {
+  world.shot = name;
+  const p = world.player;
 
   if (name === 'start') {
-    state.mode = 'title';
-    state.time = 0;
-    return { ticks: 30, drive: false };
+    world.state = 'title';
+    return { frames: 150 };
   }
-  if (name === 'play') {
-    state.missionIndex = 1;
-    world.startMission(1);
-    placeOnAvenue(world, 1800, 1700, -Math.PI / 2, 300);
-    busyStreet(world, 1800, 1400);
-    return { ticks: 150, drive: true, avenue: 1800, dir: -Math.PI / 2 };
-  }
-  if (name === 'chase') {
-    state.missionIndex = 2;
-    world.startMission(2);
-    state.wanted = 3;
-    placeOnAvenue(world, 1400, 1900, -Math.PI / 2, 380);
-    busyStreet(world, 1400, 1600);
-    return { ticks: 180, drive: true, avenue: 1400, dir: -Math.PI / 2 };
-  }
-  if (name === 'mission') {
-    state.missionIndex = 4;
-    world.startMission(4);
-    player.onFoot = true;
-    player.car = null;
-    player.x = city.places.bank.x - 120;
-    player.y = city.places.bank.y + 40;
-    player.angle = 0;
-    state.camera.x = player.x; state.camera.y = player.y;
-    // A parked getaway car and a few passers-by in frame.
-    const car = state.cars.find((c) => c.kind === 'parked');
-    if (car) { car.x = player.x + 60; car.y = player.y + 90; car.angle = 0; }
-    return { ticks: 90, drive: false };
-  }
-  return { ticks: 60, drive: false };
-}
 
-// Scripted driving: hold the accelerator and steer back onto the avenue.
-// Non-driving shots stand still — the autopilot must not walk the player.
-export function autopilotInput(world, shot, input) {
-  input.up = false;
-  input.down = false;
-  input.left = false;
-  input.right = false;
-  input.shoot = false;
-  input.punch = false;
-  if (!shot.drive || !world.player.car) return;
-  input.up = true;
-  const car = world.player.car;
-  const steer = clamp(angleDiff(car.angle, shot.dir) * 2.2, -1, 1)
-    + clamp((shot.avenue - car.x) * 0.004, -0.6, 0.6);
-  if (steer < -0.12) input.left = true;
-  else if (steer > 0.12) input.right = true;
+  world.state = 'playing';
+  world.toasts.length = 0;
+
+  if (name === 'play') {
+    world.missionIndex = 1;
+    world.mission = MISSIONS[1];
+    world.missionTimer = 0;
+    world.missionPhase = 0;
+    world.missionDone = false;
+    const car = makeHeroCar(1500, 900, Math.PI / 2, 320, '#f2f2f2');
+    world.cars.push(car);
+    p.inCar = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = car.angle;
+    p.cash = 1292;
+    world.camera.x = car.x;
+    world.camera.y = car.y;
+    installDriver(input, () => driveOnAvenue(world, 1500, 1));
+    return { frames: 100 };
+  }
+
+  if (name === 'chase') {
+    world.missionIndex = 2;
+    world.mission = MISSIONS[2];
+    world.missionTimer = 88;
+    world.missionPhase = 0;
+    world.missionDone = false;
+    world.wanted = 3;
+    world.wantedTimer = 0;
+    const car = makeHeroCar(2100, 1900, -Math.PI / 2, 380, '#f2f2f2');
+    world.cars.push(car);
+    p.inCar = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = car.angle;
+    p.cash = 1840;
+    const cop1 = makeHeroCar(2060, 2160, -Math.PI / 2, 340, '#2e5fd8');
+    cop1.kind = 'police';
+    cop1.hp = 500;
+    const cop2 = makeHeroCar(2140, 2260, -Math.PI / 2, 330, '#2e5fd8');
+    cop2.kind = 'police';
+    cop2.hp = 500;
+    world.cars.push(cop1, cop2);
+    world.camera.x = car.x;
+    world.camera.y = car.y;
+    installDriver(input, () => driveOnAvenue(world, 2100, -1));
+    return { frames: 100 };
+  }
+
+  if (name === 'mission') {
+    world.missionIndex = 4;
+    world.mission = MISSIONS[4];
+    world.missionTimer = 0;
+    world.missionPhase = 0;
+    world.missionDone = false;
+    world.wanted = 0;
+    p.inCar = null;
+    p.x = 2850;
+    p.y = 1830;
+    p.angle = Math.PI / 2;
+    p.hp = 100;
+    p.ammo = 36;
+    p.cash = 2100;
+    world.camera.x = p.x;
+    world.camera.y = p.y;
+    installDriver(input, () => ({ steer: 0, throttle: 0, walkX: 0, walkY: 0 }));
+    return { frames: 150 };
+  }
+
+  // Unknown shot: just show the title screen.
+  world.state = 'title';
+  return { frames: 120 };
 }
