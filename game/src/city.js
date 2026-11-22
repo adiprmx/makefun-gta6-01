@@ -1,128 +1,136 @@
-// Costa Verde, generated from one seed: avenues and streets, city blocks
-// with buildings, parks, trees and a bay along the south edge. The same seed
-// always builds the same city, so screenshots are reproducible.
+// Costa Verde's map: roads, blocks, buildings, parks, the bay, and the collision
+// that keeps every walker and driver out of walls and water.
+import { CITY, DISTRICTS } from './config.js';
+import { clamp, makeRng } from './random.js';
 
-import { WORLD, ROAD_W, AVENUES, STREETS, PALETTE, districtAt } from './config.js';
-import { makeRng, clamp } from './random.js';
-
-export function generateCity(seed) {
-  const rng = makeRng(seed);
-  const buildings = [];
-  const trees = [];
-  const parks = [];
-  const lamps = [];
-
-  const bayTop = 2640; // water below this line
-
-  // Blocks are the cells between roads. Each block gets buildings, a park,
-  // or stays empty (a plaza), depending on its district.
-  for (let bi = 0; bi < AVENUES.length - 1; bi++) {
-    for (let bj = 0; bj < STREETS.length - 1; bj++) {
-      const x0 = AVENUES[bi] + ROAD_W / 2 + 14;
-      const x1 = AVENUES[bi + 1] - ROAD_W / 2 - 14;
-      const y0 = STREETS[bj] + ROAD_W / 2 + 14;
-      const y1 = STREETS[bj + 1] - ROAD_W / 2 - 14;
-      if (y0 > bayTop - 40) continue; // beach blocks stay open
-      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-      const d = districtAt(cx, cy);
-      const roll = rng.next();
-      if (roll < 0.16) {
-        parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
-        const n = rng.int(4, 8);
-        for (let i = 0; i < n; i++) {
-          trees.push({ x: rng.range(x0 + 20, x1 - 20), y: rng.range(y0 + 20, y1 - 20), r: rng.range(9, 15) });
-        }
-        continue;
-      }
-      const cols = d.style === 'downtown' ? 2 : rng.chance(0.5) ? 2 : 1;
-      const rows = d.style === 'downtown' ? 2 : rng.chance(0.5) ? 2 : 1;
-      const bw = (x1 - x0) / cols, bh = (y1 - y0) / rows;
-      for (let c = 0; c < cols; c++) {
-        for (let r = 0; r < rows; r++) {
-          if (rng.chance(0.12)) continue; // gap in the block
-          const bx = x0 + c * bw + 10, by = y0 + r * bh + 10;
-          const bwid = bw - 20, bhei = bh - 20;
-          const tall = d.style === 'downtown' ? rng.int(3, 6) : d.style === 'port' ? 1 : rng.int(1, 3);
-          buildings.push({
-            x: bx, y: by, w: bwid, h: bhei, floors: tall,
-            roof: rng.pick(PALETTE.buildingRoof),
-            wall: rng.pick(PALETTE.buildingWall),
-            district: d.style,
-          });
-        }
-      }
-      // A couple of street trees on the block's corners.
-      if (rng.chance(0.7)) trees.push({ x: x0 + 8, y: y0 + 8, r: rng.range(8, 12) });
-      if (rng.chance(0.7)) trees.push({ x: x1 - 8, y: y1 - 8, r: rng.range(8, 12) });
-    }
+export function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d;
   }
-
-  // Lamps along every avenue, both sides, for the night-time glow.
-  for (const ax of AVENUES) {
-    for (let y = 120; y < WORLD.h - 120; y += 200) {
-      lamps.push({ x: ax - ROAD_W / 2 - 6, y });
-      lamps.push({ x: ax + ROAD_W / 2 + 6, y: y + 100 });
-    }
-  }
-
-  // Named places the missions and the map point at.
-  const places = {
-    garage: { x: 600, y: 1400, label: "Rosa's Garage" },
-    docks: { x: 3000, y: 600, label: 'Portside Docks' },
-    marina: { x: 2200, y: 2200, label: 'Marina Drop' },
-    hideout: { x: 1000, y: 2200, label: 'Hideout' },
-    bank: { x: 1800, y: 600, label: 'Costa Verde Trust' },
-    hospital: { x: 1400, y: 1000, label: 'St. Alba Hospital' },
-    policeHQ: { x: 1800, y: 1800, label: 'CVPD Headquarters' },
-  };
-
-  return { seed, buildings, trees, parks, lamps, places, bayTop };
+  return DISTRICTS[1];
 }
 
-// --- Collision and road helpers -------------------------------------------
-
-export function isOnRoad(city, x, y) {
-  if (y >= city.bayTop) return false;
-  for (const ax of AVENUES) if (Math.abs(x - ax) <= ROAD_W / 2) return true;
-  for (const sy of STREETS) if (Math.abs(y - sy) <= ROAD_W / 2) return true;
+export function isRoad(x, y) {
+  const half = CITY.roadWidth / 2;
+  for (const ax of CITY.avenues) if (Math.abs(x - ax) <= half) return true;
+  for (const sy of CITY.streets) if (Math.abs(y - sy) <= half) return true;
   return false;
 }
 
-export function nearestAvenue(x) {
-  let best = AVENUES[0], bd = Infinity;
-  for (const ax of AVENUES) { const d = Math.abs(x - ax); if (d < bd) { bd = d; best = ax; } }
-  return best;
-}
-export function nearestStreet(y) {
-  let best = STREETS[0], bd = Infinity;
-  for (const sy of STREETS) { const d = Math.abs(y - sy); if (d < bd) { bd = d; best = sy; } }
-  return best;
-}
+// Build the city once from a seed: buildings fill the blocks between roads, a few
+// blocks become parks, and the bank and market get fixed landmark spots.
+export function buildCity(seed) {
+  const rng = makeRng(seed);
+  const buildings = [];
+  const trees = [];
+  const roadHalf = CITY.roadWidth / 2;
+  const margin = roadHalf + 14;
 
-export function buildingAt(city, x, y) {
-  for (const b of city.buildings) {
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
+  for (let ai = 0; ai < CITY.avenues.length - 1; ai++) {
+    for (let si = 0; si < CITY.streets.length - 1; si++) {
+      const x0 = CITY.avenues[ai] + margin;
+      const x1 = CITY.avenues[ai + 1] - margin;
+      const y0 = CITY.streets[si] + margin;
+      const y1 = CITY.streets[si + 1] - margin;
+      if (x1 - x0 < 90 || y1 - y0 < 90) continue;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      // One block in five is a park instead of buildings.
+      if (rng.next() < 0.2) {
+        const count = rng.int(4, 9);
+        for (let t = 0; t < count; t++) {
+          trees.push({
+            x: rng.range(x0 + 20, x1 - 20),
+            y: rng.range(y0 + 20, y1 - 20),
+            r: rng.range(9, 15),
+          });
+        }
+        continue;
+      }
+      const cols = rng.next() < 0.5 ? 1 : 2;
+      const rows = rng.next() < 0.5 ? 1 : 2;
+      const bw = (x1 - x0 - (cols - 1) * 26) / cols;
+      const bh = (y1 - y0 - (rows - 1) * 26) / rows;
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          const bx = x0 + c * (bw + 26);
+          const by = y0 + r * (bh + 26);
+          const d = districtAt(bx + bw / 2, by + bh / 2);
+          buildings.push({
+            x: bx,
+            y: by,
+            w: bw,
+            h: bh,
+            roof: d.roof,
+            accent: d.accent,
+            tall: rng.next() < 0.3,
+          });
+        }
+      }
+      // A few trees along the block edges.
+      if (rng.next() < 0.5) {
+        trees.push({ x: cx, y: y0 + 12, r: 10 });
+        trees.push({ x: x0 + 12, y: cy, r: 10 });
+      }
+    }
   }
-  return null;
+
+  // Landmarks the missions use, placed on roads so they are always reachable.
+  const landmarks = {
+    market: { x: 760, y: 620, label: 'Old Town Market' },
+    arcade: { x: 1650, y: 1050, label: 'Downtown Arcade' },
+    docks: { x: 480, y: 2050, label: 'Portside Docks' },
+    bank: { x: 2850, y: 1950, label: 'Costa Verde Trust' },
+  };
+  return { buildings, trees, landmarks };
 }
 
-export function inWater(city, x, y) { return y >= city.bayTop; }
-
-// Push a point out of buildings and water; returns the corrected point.
+// Push a circle (x, y, radius) out of every solid rectangle and the bay.
+// Returns the corrected position. The rule is the textbook one: the closest point
+// of the rectangle to the circle centre decides the push direction, and a centre
+// inside the rectangle is pushed out along the smallest penetration axis.
 export function resolveCollision(city, x, y, radius) {
-  let px = clamp(x, 30, WORLD.w - 30);
-  let py = clamp(y, 30, WORLD.h - 30);
-  if (py >= city.bayTop - radius) py = city.bayTop - radius;
-  for (const b of city.buildings) {
-    // Only push out when the point is inside the building's expanded rect.
-    if (px < b.x - radius || px > b.x + b.w + radius || py < b.y - radius || py > b.y + b.h + radius) continue;
-    const dxl = px - (b.x - radius), dxr = (b.x + b.w + radius) - px;
-    const dyt = py - (b.y - radius), dyb = (b.y + b.h + radius) - py;
-    const m = Math.min(dxl, dxr, dyt, dyb);
-    if (m === dxl) px = b.x - radius;
-    else if (m === dxr) px = b.x + b.w + radius;
-    else if (m === dyt) py = b.y - radius;
-    else py = b.y + b.h + radius;
+  const solids = city.buildings;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const b of solids) {
+      const cx = clamp(x, b.x, b.x + b.w);
+      const cy = clamp(y, b.y, b.y + b.h);
+      let dx = x - cx;
+      let dy = y - cy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= radius * radius) continue;
+      if (d2 > 0.0001) {
+        const d = Math.sqrt(d2);
+        const push = (radius - d) / d;
+        x += dx * push;
+        y += dy * push;
+      } else {
+        // Centre is inside the rectangle: leave through the nearest face.
+        const left = x - b.x;
+        const right = b.x + b.w - x;
+        const top = y - b.y;
+        const bottom = b.y + b.h - y;
+        const min = Math.min(left, right, top, bottom);
+        if (min === left) x = b.x - radius;
+        else if (min === right) x = b.x + b.w + radius;
+        else if (min === top) y = b.y - radius;
+        else y = b.y + b.h + radius;
+      }
+    }
+    // The bay is solid water along the south edge.
+    if (y + radius > CITY.bayTop) y = CITY.bayTop - radius;
   }
-  return { x: px, y: py };
+  // Keep everything inside the city.
+  x = clamp(x, radius, CITY.width - radius);
+  y = clamp(y, radius, CITY.height - radius);
+  return { x, y };
+}
+
+// Is a point blocked by a building or the bay (used by the AI, not the player)?
+export function blockedAt(city, x, y) {
+  if (y >= CITY.bayTop) return true;
+  for (const b of city.buildings) {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
+  }
+  return false;
 }
