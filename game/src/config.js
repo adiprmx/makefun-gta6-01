@@ -1,114 +1,118 @@
-// Costa Verde — tuning, palette and story data for the open-world game.
-// Every number that shapes how the city feels lives here, so the rest of the
-// code reads like rules instead of magic constants.
-
-export const WORLD = { w: 3600, h: 2800 };
-export const ROAD_W = 96;
-export const BLOCK = 400;
-
-// Avenues (vertical roads) and streets (horizontal roads), centre coordinates.
-export const AVENUES = [200, 600, 1000, 1400, 1800, 2200, 2600, 3000, 3400];
-export const STREETS = [200, 600, 1000, 1400, 1800, 2200, 2600];
-
-export const PALETTE = {
-  grass: '#7fae5a',
-  grassDark: '#74a24f',
-  sand: '#e8d29a',
-  water: '#2e7f9e',
-  waterDeep: '#256b87',
-  road: '#3c3f46',
-  roadEdge: '#2e3138',
-  lane: '#e8d44f',
-  sidewalk: '#b9b3a4',
-  buildingRoof: ['#c96f4a', '#d98a5f', '#8a6f9e', '#5f8a7a', '#b5503f', '#e0a458'],
-  buildingWall: ['#e8dcc8', '#d9c8a8', '#cbb59a', '#f0e6d2'],
-  park: '#5d9b4a',
-  tree: '#3f7d33',
-  treeLight: '#57a047',
-  car: ['#d94f3d', '#3d7dd9', '#e8c33d', '#7ad93d', '#d93d9e', '#e8e8e8', '#2e2e34', '#e08a3d'],
-  police: '#2b4fd9',
-  taxi: '#f2c200',
-  hud: '#f5eeda',
-  gold: '#f2c200',
+// Tuning and story data for Costa Verde. Nothing here names a real place or a
+// commercial game: the city, its districts, its people and its jobs are invented.
+export const CITY = {
+  width: 3600,
+  height: 2800,
+  // Avenues (vertical roads) and streets (horizontal roads), centre lines.
+  avenues: [300, 900, 1500, 2100, 2700, 3300],
+  streets: [300, 800, 1300, 1800, 2300],
+  roadWidth: 120,
+  // The bay along the south edge: water, not walkable.
+  bayTop: 2620,
 };
 
 export const DISTRICTS = [
-  { name: 'Old Town', x0: 0, y0: 0, x1: 1200, y1: 1200, style: 'old' },
-  { name: 'Downtown', x0: 1200, y0: 0, x1: 2400, y1: 1400, style: 'downtown' },
-  { name: 'The Hills', x0: 0, y0: 1200, x1: 1200, y1: 2800, style: 'hills' },
-  { name: 'Portside', x0: 2400, y0: 0, x1: 3600, y1: 1400, style: 'port' },
-  { name: 'Marina Bay', x0: 1200, y0: 1400, x1: 3600, y1: 2800, style: 'marina' },
+  { name: 'Old Town', x0: 0, y0: 0, x1: 1200, y1: 1000, ground: '#c9b183', roof: '#8a6f4d', accent: '#b5522e' },
+  { name: 'Downtown', x0: 1200, y0: 0, x1: 2400, y1: 1500, ground: '#9aa5ad', roof: '#5d6b78', accent: '#2e7fb5' },
+  { name: 'The Hills', x0: 2400, y0: 0, x1: 3600, y1: 1000, ground: '#a8bf8e', roof: '#7d8f6a', accent: '#c9a227' },
+  { name: 'Portside', x0: 0, y0: 1000, x1: 1200, y1: 2620, ground: '#b0a58f', roof: '#6e6258', accent: '#c96a1e' },
+  { name: 'Marina Bay', x0: 1200, y0: 1500, x1: 3600, y1: 2620, ground: '#a3c4c9', roof: '#4d7d8a', accent: '#e0a32e' },
 ];
 
-export function districtAt(x, y) {
-  for (const d of DISTRICTS) if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d;
-  return DISTRICTS[0];
-}
+export const PLAYER = {
+  radius: 13,
+  walkSpeed: 230,
+  accel: 1800,
+  health: 100,
+  punchDamage: 25,
+  punchRange: 34,
+  punchArc: 1.1,
+  gunDamage: 34,
+  gunRange: 460,
+  startAmmo: 24,
+  startCash: 120,
+};
 
-// Story: Marco Solis, a driver for hire in Costa Verde, owes Mama Rosa.
-// Five missions, each with a briefing, an objective and a cash reward.
+export const CAR = {
+  length: 46,
+  width: 22,
+  accel: 420,
+  brake: 700,
+  reverseAccel: 260,
+  maxSpeed: 560,
+  maxReverse: 160,
+  steerRate: 2.6,
+  grip: 6.0,
+  heroHp: 600,
+  trafficHp: 220,
+  policeHp: 500,
+};
+
+export const WANTED = {
+  // Seconds without a crime before one star fades.
+  decaySeconds: 26,
+  // Extra decay while no cop can see the player (laying low).
+  hiddenDecaySeconds: 12,
+  maxStars: 5,
+  // Police cars on the hunt per star level.
+  policeCars: [0, 1, 2, 2, 3, 4],
+  // Foot cops on the hunt per star level.
+  footCops: [0, 0, 1, 2, 2, 3],
+};
+
 export const MISSIONS = [
   {
-    id: 1, name: 'First Wheels',
-    brief: "Mama Rosa needs a driver. Any car will do — hers is in the shop. Grab one and bring it to the garage.",
-    objective: 'Steal a car and drive to the garage',
+    id: 1,
+    name: 'First Wheels',
+    giver: 'Mama Rosa',
+    briefing: 'Marco, you need wheels before anything else. That blue coupe parked by the Old Town market is unlocked. Take it.',
+    target: { x: 830, y: 620, label: 'Steal the blue coupe' },
     reward: 150,
-    kind: 'driveTo', target: { x: 600, y: 1400, label: "Rosa's Garage" },
-    needCar: true,
+    hint: 'Walk up to the car and press E to get in.',
   },
   {
-    id: 2, name: 'The Pickup',
-    brief: "A package is waiting at the Portside docks. Park up, walk in and collect it. No questions, no trouble.",
-    objective: 'Collect the package at the docks',
-    reward: 250,
-    kind: 'walkTo', target: { x: 3000, y: 600, label: 'Portside Docks' },
-    needCar: false,
-  },
-  {
-    id: 3, name: 'Hot Delivery',
-    brief: "That package has to reach the Marina in 90 seconds. The cops are already sniffing around — drive fast, drive clean.",
-    objective: 'Deliver the package to the Marina (90s)',
-    reward: 400,
-    kind: 'timedDrive', target: { x: 2200, y: 2200, label: 'Marina Drop' },
-    timeLimit: 90, needCar: true, wantedOnStart: 1,
-  },
-  {
-    id: 4, name: 'Cool Down',
-    brief: "Too hot. Lose the heat, then lay low at the hideout until the streets forget your face.",
-    objective: 'Lose the wanted level, then reach the hideout',
+    id: 2,
+    name: 'The Pickup',
+    giver: 'Mama Rosa',
+    briefing: 'A package is waiting behind the Downtown arcade. Bring it to me, no questions, no cops.',
+    target: { x: 1500, y: 1050, label: 'Pick up the package' },
     reward: 300,
-    kind: 'loseHeat', target: { x: 1000, y: 2200, label: 'Hideout' },
-    needCar: false,
+    hint: 'Drive or walk to the gold star. Stealing a car raises your wanted level.',
   },
   {
-    id: 5, name: 'The Big Score',
-    brief: "One last job: the vault cash at Costa Verde Trust. Walk in, take it, and outrun the whole city. Make Mama Rosa proud.",
-    objective: 'Grab the cash, escape the cops, reach the hideout',
-    reward: 1500,
-    kind: 'heist', target: { x: 1800, y: 600, label: 'Costa Verde Trust' },
-    needCar: false,
+    id: 3,
+    name: 'Hot Delivery',
+    giver: 'Mama Rosa',
+    briefing: 'The package has to reach Portside in 90 seconds or the deal is dead. Drive like the bay is on fire.',
+    target: { x: 300, y: 2050, label: 'Deliver the package' },
+    reward: 500,
+    timer: 90,
+    hint: 'You have 90 seconds. Stick to the avenues and do not stop for anyone.',
+  },
+  {
+    id: 4,
+    name: 'Cool Down',
+    giver: 'Mama Rosa',
+    briefing: 'The heat is on you, Marco. Lay low until the stars are gone. Stay out of sight and keep your nose clean.',
+    target: { x: 1500, y: 1300, label: 'Lose the wanted level' },
+    reward: 200,
+    hint: 'Wanted stars fade when no cop can see you. Hide between buildings.',
+  },
+  {
+    id: 5,
+    name: 'The Big Score',
+    giver: 'Mama Rosa',
+    briefing: 'Costa Verde Trust keeps its vault behind the Marina Bay branch. Walk in, hold E at the counter, then run for the orange getaway car.',
+    target: { x: 2850, y: 1800, label: 'Rob Costa Verde Trust' },
+    reward: 2500,
+    hint: 'Press E at the bank counter to start the robbery, then reach the orange car.',
   },
 ];
 
-export const TUNING = {
-  playerWalkSpeed: 200,
-  playerRunSpeed: 260,
-  carAccel: 520,
-  carMaxSpeed: 460,
-  carReverseMax: 180,
-  carTurn: 2.6,
-  carGrip: 0.92,
-  trafficSpeed: 130,
-  pedSpeed: 55,
-  policeSpeed: 500,
-  policeRamDamage: 8,
-  punchDamage: 15,
-  pistolDamage: 34,
-  pistolAmmoStart: 36,
-  maxHealth: 100,
-  maxWanted: 5,
-  wantedDecayMs: 9000,
-  bustedFine: 200,
-  wastedFine: 150,
-  saveKey: 'costaverde-save-v1',
-};
+export const PICKUPS = [
+  { kind: 'cash', color: '#37c978', label: '$' },
+  { kind: 'health', color: '#ff5d5d', label: '+' },
+  { kind: 'ammo', color: '#f2c230', label: 'A' },
+];
+
+export const SAVE_KEY = 'costa-verde-save-v1';
